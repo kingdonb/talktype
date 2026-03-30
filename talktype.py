@@ -547,6 +547,7 @@ def transcribe_api(wav_buffer: io.BytesIO) -> str:
     """Transcribe using API (supports OpenAI-compatible and custom APIs)."""
     wav_buffer.seek(0)
 
+    headers = {}
     if is_openai_api(config.api):
         # OpenAI-compatible API format
         files = {"file": ("audio.wav", wav_buffer, "audio/wav")}
@@ -555,12 +556,22 @@ def transcribe_api(wav_buffer: io.BytesIO) -> str:
             "language": config.language,
             "response_format": "json"
         }
+        
+        # Add Authorization header if API key is set
+        if "groq" in config.api.lower():
+            api_key = os.getenv("GROQ_API_KEY")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+        elif "openai" in config.api.lower():
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
     else:
         # Custom API format (e.g., local faster-whisper server)
         files = {"file": ("audio.wav", wav_buffer, "audio/wav")}
         data = {"language": config.language}
 
-    resp = requests.post(config.api, files=files, data=data, timeout=240)
+    resp = requests.post(config.api, files=files, data=data, headers=headers, timeout=240)
     resp.raise_for_status()
 
     # Handle both JSON {"text": "..."} and plain text responses
