@@ -647,9 +647,10 @@ def paste_text(text: str):
     pyperclip.copy(text)
     time.sleep(0.05)
 
-    # Focus original window
-    focus_window(target_window)
-    time.sleep(0.05)
+    if refocus:
+        # Focus original window (needed after long transcription delays)
+        focus_window(target_window)
+        time.sleep(0.05)
 
     # Determine paste shortcut
     is_terminal = is_terminal_window(target_window) if target_window else False
@@ -790,11 +791,14 @@ def create_recovery_handler(recovery_key):
         # Store the current window so we know where to paste back
         target_window = get_active_window()
 
-        # Re-paste the last transcription
-        paste_text(" " + last_text)
-        beep_success()
-        set_terminal_title("TalkType ↩️")
-        show_status("↩️ RECOVERED", last_text[:50])
+        # Run paste in a thread to avoid conflict with pynput's key listener
+        def do_recovery():
+            time.sleep(0.15)  # Let Fn key release before sending Cmd+V
+            paste_text(" " + last_text, refocus=False)
+            beep_success()
+            set_terminal_title("TalkType ↩️")
+            show_status("↩️ RECOVERED", last_text[:50])
+        threading.Thread(target=do_recovery, daemon=True).start()
 
     return on_press
 
@@ -823,40 +827,42 @@ def create_retry_handler(retry_key):
         # Store the current window so we know where to paste back
         target_window = get_active_window()
 
-        # Re-transcribe from saved WAV
-        set_terminal_title("TalkType 🔄")
-        show_status("🔄 RETRYING", "Re-transcribing...")
+        # Run in a thread to avoid conflict with pynput's key listener
+        def do_retry():
+            set_terminal_title("TalkType 🔄")
+            show_status("🔄 RETRYING", "Re-transcribing...")
 
-        try:
-            wav_buffer = io.BytesIO(pending)
-            if config.api:
-                text = transcribe_api(wav_buffer)
-            else:
-                # Load audio from WAV for local transcription
-                wav_buffer.seek(0)
-                # Skip WAV header (44 bytes) and convert to float32
-                audio = np.frombuffer(wav_buffer.read()[44:], dtype=np.int16).astype(np.float32) / 32767
-                segments, _ = whisper_model.transcribe(audio, language=config.language)
-                text = " ".join(seg.text for seg in segments).strip()
+            try:
+                wav_buffer = io.BytesIO(pending)
+                if config.api:
+                    text = transcribe_api(wav_buffer)
+                else:
+                    # Load audio from WAV for local transcription
+                    wav_buffer.seek(0)
+                    # Skip WAV header (44 bytes) and convert to float32
+                    audio = np.frombuffer(wav_buffer.read()[44:], dtype=np.int16).astype(np.float32) / 32767
+                    segments, _ = whisper_model.transcribe(audio, language=config.language)
+                    text = " ".join(seg.text for seg in segments).strip()
 
-            if text and not is_hallucination(text):
-                paste_text(" " + text)
-                if history:
-                    history.add(text)
-                    history.clear_pending_audio()
-                beep_success()
-                set_terminal_title("TalkType ✅")
-                show_status("✅ RETRIED", text[:50])
-            else:
+                if text and not is_hallucination(text):
+                    paste_text(" " + text, refocus=False)
+                    if history:
+                        history.add(text)
+                        history.clear_pending_audio()
+                    beep_success()
+                    set_terminal_title("TalkType ✅")
+                    show_status("✅ RETRIED", text[:50])
+                else:
+                    beep_error()
+                    show_status("❌ NO SPEECH", "")
+                    if history:
+                        history.clear_pending_audio()
+            except Exception as e:
                 beep_error()
-                show_status("❌ NO SPEECH", "")
-                if history:
-                    history.clear_pending_audio()
-        except Exception as e:
-            beep_error()
-            set_terminal_title("TalkType ❌")
-            show_status("❌ RETRY FAILED", str(e)[:30])
-            # Keep pending audio for another retry attempt
+                set_terminal_title("TalkType ❌")
+                show_status("❌ RETRY FAILED", str(e)[:30])
+                # Keep pending audio for another retry attempt
+        threading.Thread(target=do_retry, daemon=True).start()
 
     return on_press
 
