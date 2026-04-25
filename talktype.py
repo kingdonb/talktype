@@ -376,14 +376,15 @@ def get_active_window():
         if SYSTEM == "Linux":
             return subprocess.check_output(
                 ["xdotool", "getactivewindow"],
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                timeout=1.0
             ).strip()
         elif SYSTEM == "Windows":
             import ctypes
             return ctypes.windll.user32.GetForegroundWindow()
         elif SYSTEM == "Darwin":
             script = 'tell application "System Events" to get name of first process whose frontmost is true'
-            result = subprocess.check_output(["osascript", "-e", script], stderr=subprocess.DEVNULL)
+            result = subprocess.check_output(["osascript", "-e", script], stderr=subprocess.DEVNULL, timeout=1.0)
             return result.strip()
     except:
         return None
@@ -971,7 +972,7 @@ def main():
     import signal
     def signal_handler(sig, frame):
         print("\nBye!")
-        sys.exit(0)
+        os._exit(0)
     signal.signal(signal.SIGINT, signal_handler)
 
     with keyboard.Listener(on_press=combined_handler) as listener:
