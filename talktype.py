@@ -478,7 +478,21 @@ def stop_recording() -> np.ndarray:
 
     if not audio_chunks:
         return np.array([], dtype=np.float32)
-    return np.concatenate(audio_chunks).flatten()
+    
+    audio = np.concatenate(audio_chunks).flatten()
+    
+    # NEW: Save pending audio IMMEDIATELY after recording stops
+    # This prevents data loss if transcription hangs or crashes
+    if history and len(audio) >= SAMPLE_RATE * 0.5:
+        try:
+            audio_int16 = (audio * 32767).astype(np.int16)
+            wav_buffer = io.BytesIO()
+            wavfile.write(wav_buffer, SAMPLE_RATE, audio_int16)
+            history.save_pending_audio(wav_buffer)
+        except Exception as e:
+            print(f"Warning: Failed to save emergency backup: {e}")
+
+    return audio
 
 
 # === Transcription ===
