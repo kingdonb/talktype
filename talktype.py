@@ -376,14 +376,15 @@ def get_active_window():
         if SYSTEM == "Linux":
             return subprocess.check_output(
                 ["xdotool", "getactivewindow"],
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                timeout=1.0
             ).strip()
         elif SYSTEM == "Windows":
             import ctypes
             return ctypes.windll.user32.GetForegroundWindow()
         elif SYSTEM == "Darwin":
             script = 'tell application "System Events" to get name of first process whose frontmost is true'
-            result = subprocess.check_output(["osascript", "-e", script], stderr=subprocess.DEVNULL)
+            result = subprocess.check_output(["osascript", "-e", script], stderr=subprocess.DEVNULL, timeout=1.0)
             return result.strip()
     except:
         return None
@@ -477,7 +478,21 @@ def stop_recording() -> np.ndarray:
 
     if not audio_chunks:
         return np.array([], dtype=np.float32)
-    return np.concatenate(audio_chunks).flatten()
+    
+    audio = np.concatenate(audio_chunks).flatten()
+    
+    # NEW: Save pending audio IMMEDIATELY after recording stops
+    # This prevents data loss if transcription hangs or crashes
+    if history and len(audio) >= SAMPLE_RATE * 0.5:
+        try:
+            audio_int16 = (audio * 32767).astype(np.int16)
+            wav_buffer = io.BytesIO()
+            wavfile.write(wav_buffer, SAMPLE_RATE, audio_int16)
+            history.save_pending_audio(wav_buffer)
+        except Exception as e:
+            print(f"Warning: Failed to save emergency backup: {e}")
+
+    return audio
 
 
 # === Transcription ===
@@ -971,7 +986,7 @@ def main():
     import signal
     def signal_handler(sig, frame):
         print("\nBye!")
-        sys.exit(0)
+        os._exit(0)
     signal.signal(signal.SIGINT, signal_handler)
 
     with keyboard.Listener(on_press=combined_handler) as listener:
